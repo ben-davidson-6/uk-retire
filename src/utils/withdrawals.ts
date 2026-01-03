@@ -82,6 +82,9 @@ export function calculateWithdrawals(
     const thresholds = TAX_BRACKET_THRESHOLDS[profile.taxBracketTarget];
     const maxTaxBracketThreshold = profile.isScottish ? thresholds.scottish : thresholds.uk;
 
+    // Check if private pension is accessible
+    const canAccessPension = age >= profile.privatePensionAge;
+
     // Withdrawal strategy (optimized for tax efficiency using band-filling)
     const withdrawal = performWithdrawal(
       balances,
@@ -89,7 +92,8 @@ export function calculateWithdrawals(
       taxFreeLumpSumRemaining,
       profile.isScottish,
       statePension,
-      maxTaxBracketThreshold
+      maxTaxBracketThreshold,
+      canAccessPension
     );
 
     // Update tax-free lump sum remaining
@@ -207,7 +211,8 @@ function performWithdrawal(
   taxFreeLumpSumRemaining: number,
   _isScottish: boolean,  // Reserved for potential Scottish-specific logic
   statePensionIncome: number,
-  maxTaxBracketThreshold: number  // e.g., 50270 to stay in basic rate
+  maxTaxBracketThreshold: number,  // e.g., 50270 to stay in basic rate
+  canAccessPension: boolean  // Whether private pension is accessible (age >= privatePensionAge)
 ): WithdrawalResult {
   let remaining = target;
   let pensionWithdrawal = 0;
@@ -218,14 +223,14 @@ function performWithdrawal(
   let capitalGains = 0;
 
   // Tax-band filling strategy:
-  // 1. Take tax-free lump sum from pension (25% tax-free) - always good
-  // 2. Fill lower tax brackets with pension withdrawals (up to threshold)
+  // 1. Take tax-free lump sum from pension (25% tax-free) - always good (if pension accessible)
+  // 2. Fill lower tax brackets with pension withdrawals (up to threshold) (if pension accessible)
   // 3. Use ISA/LISA (tax-free) to supplement
   // 4. Use GIA (CGT) if more needed
-  // 5. Fall back to more pension if all else exhausted
+  // 5. Fall back to more pension if all else exhausted (if pension accessible)
 
-  // Step 1: Tax-free lump sum from pension
-  if (remaining > 0 && taxFreeLumpSumRemaining > 0 && balances.pension > 0) {
+  // Step 1: Tax-free lump sum from pension (only if pension is accessible)
+  if (canAccessPension && remaining > 0 && taxFreeLumpSumRemaining > 0 && balances.pension > 0) {
     const lumpSumToTake = Math.min(remaining, taxFreeLumpSumRemaining, balances.pension);
     taxFreeLumpSum = lumpSumToTake;
     pensionWithdrawal += lumpSumToTake;
@@ -239,7 +244,7 @@ function performWithdrawal(
   const taxableIncomeAlready = statePensionIncome;  // Tax-free lump sum doesn't count
   const roomInLowerBrackets = Math.max(0, maxTaxBracketThreshold - taxableIncomeAlready);
 
-  if (remaining > 0 && balances.pension > 0 && roomInLowerBrackets > 0) {
+  if (canAccessPension && remaining > 0 && balances.pension > 0 && roomInLowerBrackets > 0) {
     // Withdraw pension up to the tax bracket threshold
     const pensionToFillBracket = Math.min(remaining, roomInLowerBrackets, balances.pension);
     pensionWithdrawal += pensionToFillBracket;
@@ -282,7 +287,7 @@ function performWithdrawal(
 
   // Step 6: Additional pension withdrawals if we've exhausted other sources
   // (This will be taxed at higher rates, but we have no choice)
-  if (remaining > 0 && balances.pension > 0) {
+  if (canAccessPension && remaining > 0 && balances.pension > 0) {
     const pensionToWithdraw = Math.min(remaining, balances.pension);
     pensionWithdrawal += pensionToWithdraw;
     balances.pension -= pensionToWithdraw;

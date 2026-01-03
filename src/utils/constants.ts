@@ -71,6 +71,7 @@ export const DEFAULT_PROFILE = {
   currentAge: 35,
   retirementAge: 60,
   lifeExpectancy: 90,
+  privatePensionAge: 57,  // Rising to 57 in 2028, currently 55
   statePensionAge: STATE_PENSION_AGE,
   statePensionAmount: FULL_STATE_PENSION_ANNUAL,
   isScottish: false,

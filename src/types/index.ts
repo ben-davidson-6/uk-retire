@@ -32,6 +32,7 @@ export interface Profile {
   currentAge: number;
   retirementAge: number;
   lifeExpectancy: number;
+  privatePensionAge: number;       // Age when private pension (SIPP/workplace) can be accessed
   statePensionAge: number;         // UK State Pension age
   statePensionAmount: number;      // Annual State Pension (£11,502 for 2024/25 full amount)
   isScottish: boolean;             // Scotland has different income tax rates
