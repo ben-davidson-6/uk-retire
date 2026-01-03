@@ -52,10 +52,12 @@ export default function App() {
     'uk-retirement-accounts',
     createDefaultAccounts()
   );
-  const [profile, setProfile] = useLocalStorage<Profile>(
+  const [storedProfile, setProfile] = useLocalStorage<Partial<Profile>>(
     'uk-retirement-profile',
     DEFAULT_PROFILE
   );
+  // Merge with defaults to handle missing fields from older stored profiles
+  const profile: Profile = { ...DEFAULT_PROFILE, ...storedProfile };
   const [assumptions, setAssumptions] = useLocalStorage<Assumptions>(
     'uk-retirement-assumptions',
     DEFAULT_ASSUMPTIONS

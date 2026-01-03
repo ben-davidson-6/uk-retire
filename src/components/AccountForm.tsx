@@ -179,7 +179,7 @@ export function AccountForm({ account, onSave, onCancel }: AccountFormProps) {
             onChange={(v) => handleChange('expectedReturn', v / 100)}
             min={0}
             max={20}
-            step={0.5}
+            step={0.1}
             suffix="%"
             className={inputClassName}
           />

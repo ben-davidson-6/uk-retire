@@ -6,7 +6,7 @@ import {
   RetirementResult,
 } from '../types';
 import { calculateIncomeTax, calculateCapitalGainsTax } from './taxes';
-import { TAX_FREE_LUMP_SUM_RATE } from './constants';
+import { TAX_FREE_LUMP_SUM_RATE, TAX_BRACKET_THRESHOLDS } from './constants';
 
 interface AccountBalances {
   pension: number;
@@ -74,12 +74,18 @@ export function calculateWithdrawals(
     const startingBalance =
       balances.pension + balances.isa + balances.lisa + balances.taxable;
 
-    // Withdrawal strategy (optimized for tax efficiency)
+    // Determine tax bracket threshold to fill based on user preference
+    const thresholds = TAX_BRACKET_THRESHOLDS[profile.taxBracketTarget];
+    const maxTaxBracketThreshold = profile.isScottish ? thresholds.scottish : thresholds.uk;
+
+    // Withdrawal strategy (optimized for tax efficiency using band-filling)
     const withdrawal = performWithdrawal(
       balances,
       neededFromPortfolio,
       taxFreeLumpSumRemaining,
-      profile.isScottish
+      profile.isScottish,
+      statePension,
+      maxTaxBracketThreshold
     );
 
     // Update tax-free lump sum remaining
@@ -189,11 +195,15 @@ interface WithdrawalResult {
 }
 
 // Tax-optimized withdrawal strategy for UK
+// Uses "tax-band filling" approach: withdraw pension up to a target tax bracket,
+// then supplement with ISA/LISA/GIA to avoid paying higher rates in later years
 function performWithdrawal(
   balances: AccountBalances,
   target: number,
   taxFreeLumpSumRemaining: number,
-  _isScottish: boolean  // Reserved for future Scottish-specific logic
+  _isScottish: boolean,  // Reserved for potential Scottish-specific logic
+  statePensionIncome: number,
+  maxTaxBracketThreshold: number  // e.g., 50270 to stay in basic rate
 ): WithdrawalResult {
   let remaining = target;
   let pensionWithdrawal = 0;
@@ -203,12 +213,12 @@ function performWithdrawal(
   let taxFreeLumpSum = 0;
   let capitalGains = 0;
 
-  // Strategy:
-  // 1. Use tax-free lump sum from pension first (25% tax-free)
-  // 2. Use ISA (completely tax-free)
-  // 3. Use LISA (tax-free for retirement after 60)
-  // 4. Use taxable account (may incur CGT)
-  // 5. Use pension (taxed as income)
+  // Tax-band filling strategy:
+  // 1. Take tax-free lump sum from pension (25% tax-free) - always good
+  // 2. Fill lower tax brackets with pension withdrawals (up to threshold)
+  // 3. Use ISA/LISA (tax-free) to supplement
+  // 4. Use GIA (CGT) if more needed
+  // 5. Fall back to more pension if all else exhausted
 
   // Step 1: Tax-free lump sum from pension
   if (remaining > 0 && taxFreeLumpSumRemaining > 0 && balances.pension > 0) {
@@ -219,7 +229,21 @@ function performWithdrawal(
     remaining -= lumpSumToTake;
   }
 
-  // Step 2: ISA withdrawals (tax-free)
+  // Step 2: Fill tax brackets with pension (excluding tax-free lump sum from taxable income)
+  // Calculate how much "room" we have in lower tax brackets
+  // State pension is already taxable income, so we need to account for it
+  const taxableIncomeAlready = statePensionIncome;  // Tax-free lump sum doesn't count
+  const roomInLowerBrackets = Math.max(0, maxTaxBracketThreshold - taxableIncomeAlready);
+
+  if (remaining > 0 && balances.pension > 0 && roomInLowerBrackets > 0) {
+    // Withdraw pension up to the tax bracket threshold
+    const pensionToFillBracket = Math.min(remaining, roomInLowerBrackets, balances.pension);
+    pensionWithdrawal += pensionToFillBracket;
+    balances.pension -= pensionToFillBracket;
+    remaining -= pensionToFillBracket;
+  }
+
+  // Step 3: ISA withdrawals (tax-free) to supplement
   if (remaining > 0 && balances.isa > 0) {
     const isaToWithdraw = Math.min(remaining, balances.isa);
     isaWithdrawal = isaToWithdraw;
@@ -227,7 +251,7 @@ function performWithdrawal(
     remaining -= isaToWithdraw;
   }
 
-  // Step 3: LISA withdrawals (tax-free after 60)
+  // Step 4: LISA withdrawals (tax-free after 60)
   if (remaining > 0 && balances.lisa > 0) {
     const lisaToWithdraw = Math.min(remaining, balances.lisa);
     lisaWithdrawal = lisaToWithdraw;
@@ -235,7 +259,7 @@ function performWithdrawal(
     remaining -= lisaToWithdraw;
   }
 
-  // Step 4: Taxable account (GIA) - may incur CGT
+  // Step 5: Taxable account (GIA) - may incur CGT but usually lower than income tax
   if (remaining > 0 && balances.taxable > 0) {
     const taxableToWithdraw = Math.min(remaining, balances.taxable);
 
@@ -252,7 +276,8 @@ function performWithdrawal(
     remaining -= taxableToWithdraw;
   }
 
-  // Step 5: Additional pension withdrawals (taxed as income)
+  // Step 6: Additional pension withdrawals if we've exhausted other sources
+  // (This will be taxed at higher rates, but we have no choice)
   if (remaining > 0 && balances.pension > 0) {
     const pensionToWithdraw = Math.min(remaining, balances.pension);
     pensionWithdrawal += pensionToWithdraw;

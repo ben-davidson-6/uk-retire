@@ -34,6 +34,9 @@ export function NumberInput({
     }
   };
 
+  // Round to avoid floating point precision issues (e.g., 7.000000000000001)
+  const displayValue = parseFloat(value.toPrecision(12));
+
   return (
     <div className="relative flex items-center">
       {prefix && (
@@ -43,7 +46,7 @@ export function NumberInput({
       )}
       <input
         type="number"
-        value={value}
+        value={displayValue}
         onChange={handleChange}
         min={min}
         max={max}

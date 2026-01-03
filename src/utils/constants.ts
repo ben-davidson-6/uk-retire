@@ -74,6 +74,15 @@ export const DEFAULT_PROFILE = {
   statePensionAge: STATE_PENSION_AGE,
   statePensionAmount: FULL_STATE_PENSION_ANNUAL,
   isScottish: false,
+  taxBracketTarget: 'basic_rate' as const,  // Stay below 40% tax rate
+};
+
+// Tax bracket thresholds for withdrawal strategy
+export const TAX_BRACKET_THRESHOLDS = {
+  personal_allowance: { uk: 12570, scottish: 12570 },
+  basic_rate: { uk: 50270, scottish: 43662 },
+  higher_rate: { uk: 125140, scottish: 125140 },
+  no_limit: { uk: Infinity, scottish: Infinity },
 };
 
 // Default Assumptions

@@ -21,6 +21,13 @@ export interface Account {
   salaryForMatch?: number;         // Salary used to calculate employer contribution
 }
 
+// Tax bracket targets for withdrawal strategy
+export type TaxBracketTarget =
+  | 'personal_allowance'  // Stay below £12,570 - 0% tax
+  | 'basic_rate'          // Stay below £50,270 - max 20% tax (UK) / £43,662 (Scotland)
+  | 'higher_rate'         // Stay below £125,140 - max 40% tax
+  | 'no_limit';           // Draw pension last (original behavior)
+
 export interface Profile {
   currentAge: number;
   retirementAge: number;
@@ -28,6 +35,7 @@ export interface Profile {
   statePensionAge: number;         // UK State Pension age
   statePensionAmount: number;      // Annual State Pension (£11,502 for 2024/25 full amount)
   isScottish: boolean;             // Scotland has different income tax rates
+  taxBracketTarget: TaxBracketTarget;  // Which tax bracket to fill before using ISA/LISA
 }
 
 export interface Assumptions {

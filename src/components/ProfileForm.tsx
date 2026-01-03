@@ -1,7 +1,14 @@
-import { Profile } from '../types';
+import { Profile, TaxBracketTarget } from '../types';
 import { NumberInput } from './NumberInput';
 import { Tooltip } from './Tooltip';
 import { FULL_STATE_PENSION_ANNUAL, STATE_PENSION_AGE } from '../utils/constants';
+
+const TAX_BRACKET_OPTIONS: { value: TaxBracketTarget; label: string; description: string }[] = [
+  { value: 'personal_allowance', label: 'Personal Allowance (£12,570)', description: '0% tax on pension withdrawals' },
+  { value: 'basic_rate', label: 'Basic Rate (£50,270)', description: 'Max 20% tax on pension withdrawals' },
+  { value: 'higher_rate', label: 'Higher Rate (£125,140)', description: 'Max 40% tax on pension withdrawals' },
+  { value: 'no_limit', label: 'No limit (draw pension last)', description: 'Original strategy - deplete ISA/GIA first' },
+];
 
 interface ProfileFormProps {
   profile: Profile;
@@ -18,7 +25,7 @@ const inputClassName = `
 `;
 
 export function ProfileForm({ profile, onChange }: ProfileFormProps) {
-  const handleChange = (field: keyof Profile, value: number | boolean) => {
+  const handleChange = (field: keyof Profile, value: number | boolean | TaxBracketTarget) => {
     onChange({ ...profile, [field]: value });
   };
 
@@ -49,7 +56,7 @@ export function ProfileForm({ profile, onChange }: ProfileFormProps) {
             <NumberInput
               value={profile.retirementAge}
               onChange={(v) => handleChange('retirementAge', v)}
-              min={Math.max(55, profile.currentAge)}
+              min={profile.currentAge}
               max={100}
               className={inputClassName}
             />
@@ -125,6 +132,33 @@ export function ProfileForm({ profile, onChange }: ProfileFormProps) {
               Current age: {STATE_PENSION_AGE}
             </p>
           </div>
+        </div>
+      </div>
+
+      {/* Withdrawal Strategy */}
+      <div>
+        <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+          Withdrawal Strategy
+        </h4>
+        <div>
+          <label className="flex items-center gap-2 text-sm font-medium text-gray-600 dark:text-gray-400 mb-1">
+            Tax Bracket Target
+            <Tooltip content="Controls how much pension to withdraw each year vs ISA/LISA. Lower brackets mean more tax-efficient withdrawals spread across years, but uses ISA sooner." />
+          </label>
+          <select
+            value={profile.taxBracketTarget}
+            onChange={(e) => handleChange('taxBracketTarget', e.target.value as TaxBracketTarget)}
+            className={inputClassName}
+          >
+            {TAX_BRACKET_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {TAX_BRACKET_OPTIONS.find(o => o.value === profile.taxBracketTarget)?.description}
+          </p>
         </div>
       </div>
     </div>
