@@ -42,10 +42,14 @@ export function calculateWithdrawals(
   // Track whether tax-free lump sum has been taken
   let taxFreeLumpSumRemaining = balances.pension * TAX_FREE_LUMP_SUM_RATE;
 
-  // Calculate annual withdrawal target (inflation-adjusted)
+  // Calculate annual withdrawal target
   const totalPortfolio =
     balances.pension + balances.isa + balances.lisa + balances.taxable;
-  const baseWithdrawalTarget = totalPortfolio * assumptions.safeWithdrawalRate;
+
+  // Use target income if set, otherwise fall back to SWR
+  const baseWithdrawalTarget = assumptions.targetRetirementIncome !== null
+    ? assumptions.targetRetirementIncome
+    : totalPortfolio * assumptions.safeWithdrawalRate;
 
   let totalWithdrawn = 0;
   let totalTaxPaid = 0;

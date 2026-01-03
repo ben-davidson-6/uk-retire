@@ -42,6 +42,7 @@ export interface Assumptions {
   inflationRate: number;
   safeWithdrawalRate: number;
   retirementReturnRate: number;
+  targetRetirementIncome: number | null;  // Annual target in today's money, null = use SWR
 }
 
 // Yearly snapshot during accumulation

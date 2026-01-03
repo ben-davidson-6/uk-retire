@@ -90,6 +90,7 @@ export const DEFAULT_ASSUMPTIONS = {
   inflationRate: 0.03,
   safeWithdrawalRate: 0.04,
   retirementReturnRate: 0.05,
+  targetRetirementIncome: 40000 as number | null,  // £40k/year target, null = use SWR
 };
 
 // Format currency in GBP
