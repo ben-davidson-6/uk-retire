@@ -1,9 +1,12 @@
 import {
-  Profile,
   Assumptions,
   AccumulationResult,
   WithdrawalYear,
   RetirementResult,
+  HouseholdProfile,
+  Account,
+  getTaxTreatment,
+  TaxBracketTarget,
 } from '../types';
 import { calculateIncomeTax, calculateCapitalGainsTax } from './taxes';
 import { TAX_FREE_LUMP_SUM_RATE, TAX_BRACKET_THRESHOLDS } from './constants';
@@ -16,13 +19,34 @@ interface AccountBalances {
   taxableCostBasis: number;  // For CGT calculations
 }
 
-// Calculate withdrawals through retirement
+// Per-person balances for couple mode
+interface CoupleBalances {
+  person1: AccountBalances;
+  person2: AccountBalances;
+}
+
+// Calculate withdrawals through retirement (supports both single and couple modes)
 export function calculateWithdrawals(
-  _accounts: unknown,  // Reserved for future use
-  profile: Profile,
+  accounts: Account[],
+  household: HouseholdProfile,
   assumptions: Assumptions,
   accumulation: AccumulationResult
 ): RetirementResult {
+  // For couple mode, we need to track per-person balances
+  if (household.mode === 'couple' && household.person2) {
+    return calculateCoupleWithdrawals(accounts, household, assumptions, accumulation);
+  }
+  return calculateSingleWithdrawals(accounts, household, assumptions, accumulation);
+}
+
+// Single-person withdrawal calculation (original logic with HouseholdProfile)
+function calculateSingleWithdrawals(
+  _accounts: Account[],
+  household: HouseholdProfile,
+  assumptions: Assumptions,
+  accumulation: AccumulationResult
+): RetirementResult {
+  const profile = household.person1;
   const years: WithdrawalYear[] = [];
   const currentYear = new Date().getFullYear();
   const yearsUntilRetirement = profile.retirementAge - profile.currentAge;
@@ -68,7 +92,7 @@ export function calculateWithdrawals(
     if (age >= profile.statePensionAge) {
       const statePensionYears = age - profile.statePensionAge;
       const statePensionInflation = Math.pow(1 + assumptions.inflationRate, statePensionYears);
-      statePension = profile.statePensionAmount * statePensionInflation;
+      statePension = household.statePensionAmount * statePensionInflation;
     }
 
     // Calculate how much we need to withdraw from portfolio
@@ -175,6 +199,221 @@ export function calculateWithdrawals(
       isaBalance: balances.isa,
       lisaBalance: balances.lisa,
       taxableBalance: balances.taxable,
+
+      portfolioDepleted,
+    });
+  }
+
+  // Calculate sustainable withdrawal (what could be withdrawn indefinitely)
+  const sustainableWithdrawal = totalPortfolio * 0.04;  // Simple 4% rule
+
+  return {
+    years,
+    totalWithdrawn,
+    totalTaxPaid,
+    portfolioDepletionAge,
+    sustainableWithdrawal,
+  };
+}
+
+// Couple withdrawal calculation - optimizes across both people's tax allowances
+function calculateCoupleWithdrawals(
+  accounts: Account[],
+  household: HouseholdProfile,
+  assumptions: Assumptions,
+  accumulation: AccumulationResult
+): RetirementResult {
+  const person1 = household.person1;
+  const person2 = household.person2!;
+
+  const years: WithdrawalYear[] = [];
+  const currentYear = new Date().getFullYear();
+
+  // Get final balances from accumulation per person
+  const finalAccumYear = accumulation.years[accumulation.years.length - 1];
+
+  // Split balances by account owner
+  const person1Balances: AccountBalances = { pension: 0, isa: 0, lisa: 0, taxable: 0, taxableCostBasis: 0 };
+  const person2Balances: AccountBalances = { pension: 0, isa: 0, lisa: 0, taxable: 0, taxableCostBasis: 0 };
+
+  accounts.forEach(account => {
+    const balance = finalAccumYear?.accounts[account.id] ?? account.balance;
+    const treatment = getTaxTreatment(account.type);
+    const targetBalances = (account.owner === 'person2') ? person2Balances : person1Balances;
+
+    switch (treatment) {
+      case 'pension':
+        targetBalances.pension += balance;
+        break;
+      case 'isa':
+        targetBalances.isa += balance;
+        break;
+      case 'lisa':
+        targetBalances.lisa += balance;
+        break;
+      case 'taxable':
+        targetBalances.taxable += balance;
+        targetBalances.taxableCostBasis += balance * 0.5;  // Estimate 50% cost basis
+        break;
+    }
+  });
+
+  // Track tax-free lump sum per person
+  let person1TaxFreeLumpSum = person1Balances.pension * TAX_FREE_LUMP_SUM_RATE;
+  let person2TaxFreeLumpSum = person2Balances.pension * TAX_FREE_LUMP_SUM_RATE;
+
+  // Calculate total portfolio and withdrawal target
+  const totalPortfolio =
+    person1Balances.pension + person1Balances.isa + person1Balances.lisa + person1Balances.taxable +
+    person2Balances.pension + person2Balances.isa + person2Balances.lisa + person2Balances.taxable;
+
+  // Use target income if set, otherwise fall back to SWR
+  const baseWithdrawalTarget = assumptions.targetRetirementIncome !== null
+    ? assumptions.targetRetirementIncome
+    : totalPortfolio * assumptions.safeWithdrawalRate;
+
+  let totalWithdrawn = 0;
+  let totalTaxPaid = 0;
+  let portfolioDepletionAge: number | null = null;
+
+  // Use the older person's current age as reference, and longest life expectancy
+  const oldestCurrentAge = Math.max(person1.currentAge, person2.currentAge);
+  const earliestRetirementAge = Math.min(person1.retirementAge, person2.retirementAge);
+  const latestLifeExpectancy = Math.max(person1.lifeExpectancy, person2.lifeExpectancy);
+  const yearsUntilRetirement = earliestRetirementAge - oldestCurrentAge;
+
+  for (let yearIndex = 0; yearIndex <= latestLifeExpectancy - earliestRetirementAge; yearIndex++) {
+    const referenceAge = earliestRetirementAge + yearIndex;
+    const year = currentYear + yearsUntilRetirement + yearIndex;
+
+    // Calculate actual ages for each person
+    const ageDiff1 = oldestCurrentAge - person1.currentAge;
+    const ageDiff2 = oldestCurrentAge - person2.currentAge;
+    const person1Age = referenceAge - ageDiff1 + (oldestCurrentAge - earliestRetirementAge);
+    const person2Age = referenceAge - ageDiff2 + (oldestCurrentAge - earliestRetirementAge);
+
+    // Inflation-adjust the withdrawal target
+    const inflationFactor = Math.pow(1 + assumptions.inflationRate, yearIndex);
+    const withdrawalTarget = baseWithdrawalTarget * inflationFactor;
+
+    // Calculate State Pension - split 50/50 between both people, each starts at their state pension age
+    let person1StatePension = 0;
+    let person2StatePension = 0;
+    const halfStatePension = household.statePensionAmount / 2;
+
+    if (person1Age >= person1.statePensionAge) {
+      const yearsReceiving = person1Age - person1.statePensionAge;
+      person1StatePension = halfStatePension * Math.pow(1 + assumptions.inflationRate, yearsReceiving);
+    }
+    if (person2Age >= person2.statePensionAge) {
+      const yearsReceiving = person2Age - person2.statePensionAge;
+      person2StatePension = halfStatePension * Math.pow(1 + assumptions.inflationRate, yearsReceiving);
+    }
+    const totalStatePension = person1StatePension + person2StatePension;
+
+    // Calculate how much we need to withdraw from portfolio
+    const neededFromPortfolio = Math.max(0, withdrawalTarget - totalStatePension);
+
+    // Starting balances for the year
+    const startingBalance =
+      person1Balances.pension + person1Balances.isa + person1Balances.lisa + person1Balances.taxable +
+      person2Balances.pension + person2Balances.isa + person2Balances.lisa + person2Balances.taxable;
+
+    // Check pension accessibility for each person
+    const person1CanAccessPension = person1Age >= person1.privatePensionAge;
+    const person2CanAccessPension = person2Age >= person2.privatePensionAge;
+
+    // Perform couple withdrawal - optimizes across both people's tax allowances
+    const withdrawal = performCoupleWithdrawal(
+      { person1: person1Balances, person2: person2Balances },
+      neededFromPortfolio,
+      { person1: person1TaxFreeLumpSum, person2: person2TaxFreeLumpSum },
+      { person1: person1.isScottish, person2: person2.isScottish },
+      { person1: person1StatePension, person2: person2StatePension },
+      { person1: person1.taxBracketTarget, person2: person2.taxBracketTarget },
+      { person1: person1CanAccessPension, person2: person2CanAccessPension }
+    );
+
+    // Update tax-free lump sum remaining
+    person1TaxFreeLumpSum = Math.max(0, person1TaxFreeLumpSum - withdrawal.person1TaxFreeLumpSum);
+    person2TaxFreeLumpSum = Math.max(0, person2TaxFreeLumpSum - withdrawal.person2TaxFreeLumpSum);
+
+    // Apply investment returns to remaining balances
+    const returnRate = assumptions.retirementReturnRate;
+    person1Balances.pension *= 1 + returnRate;
+    person1Balances.isa *= 1 + returnRate;
+    person1Balances.lisa *= 1 + returnRate;
+    person1Balances.taxable *= 1 + returnRate;
+    if (person1Balances.taxable > 0) person1Balances.taxableCostBasis *= 1 + returnRate;
+
+    person2Balances.pension *= 1 + returnRate;
+    person2Balances.isa *= 1 + returnRate;
+    person2Balances.lisa *= 1 + returnRate;
+    person2Balances.taxable *= 1 + returnRate;
+    if (person2Balances.taxable > 0) person2Balances.taxableCostBasis *= 1 + returnRate;
+
+    const endingBalance =
+      person1Balances.pension + person1Balances.isa + person1Balances.lisa + person1Balances.taxable +
+      person2Balances.pension + person2Balances.isa + person2Balances.lisa + person2Balances.taxable;
+
+    // Calculate taxes for each person
+    const person1TaxableIncome = person1StatePension + withdrawal.person1PensionWithdrawal - withdrawal.person1TaxFreeLumpSum;
+    const person2TaxableIncome = person2StatePension + withdrawal.person2PensionWithdrawal - withdrawal.person2TaxFreeLumpSum;
+
+    const { tax: person1IncomeTax } = calculateIncomeTax(Math.max(0, person1TaxableIncome), person1.isScottish);
+    const { tax: person2IncomeTax } = calculateIncomeTax(Math.max(0, person2TaxableIncome), person2.isScottish);
+
+    const person1CGT = calculateCapitalGainsTax(withdrawal.person1CapitalGains, person1TaxableIncome, person1.isScottish);
+    const person2CGT = calculateCapitalGainsTax(withdrawal.person2CapitalGains, person2TaxableIncome, person2.isScottish);
+
+    const incomeTax = person1IncomeTax + person2IncomeTax;
+    const capitalGainsTax = person1CGT + person2CGT;
+    const totalTax = incomeTax + capitalGainsTax;
+
+    // Calculate totals
+    const totalPensionWithdrawal = withdrawal.person1PensionWithdrawal + withdrawal.person2PensionWithdrawal;
+    const totalIsaWithdrawal = withdrawal.person1IsaWithdrawal + withdrawal.person2IsaWithdrawal;
+    const totalLisaWithdrawal = withdrawal.person1LisaWithdrawal + withdrawal.person2LisaWithdrawal;
+    const totalTaxableWithdrawal = withdrawal.person1TaxableWithdrawal + withdrawal.person2TaxableWithdrawal;
+    const totalTaxFreeLumpSum = withdrawal.person1TaxFreeLumpSum + withdrawal.person2TaxFreeLumpSum;
+
+    const grossIncome =
+      totalStatePension + totalPensionWithdrawal + totalIsaWithdrawal + totalLisaWithdrawal + totalTaxableWithdrawal;
+    const netIncome = grossIncome - totalTax;
+
+    totalWithdrawn += withdrawal.total;
+    totalTaxPaid += totalTax;
+
+    // Check for portfolio depletion
+    const portfolioDepleted = endingBalance <= 0;
+    if (portfolioDepleted && portfolioDepletionAge === null) {
+      portfolioDepletionAge = referenceAge;
+    }
+
+    years.push({
+      age: referenceAge,
+      year,
+      startingBalance,
+      endingBalance: Math.max(0, endingBalance),
+
+      statePension: totalStatePension,
+      pensionWithdrawal: totalPensionWithdrawal,
+      isaWithdrawal: totalIsaWithdrawal,
+      lisaWithdrawal: totalLisaWithdrawal,
+      taxableWithdrawal: totalTaxableWithdrawal,
+      taxFreeLumpSum: totalTaxFreeLumpSum,
+      totalWithdrawal: withdrawal.total,
+
+      taxableIncome: Math.max(0, person1TaxableIncome + person2TaxableIncome),
+      incomeTax,
+      capitalGainsTax,
+      totalTax,
+      netIncome,
+
+      pensionBalance: person1Balances.pension + person2Balances.pension,
+      isaBalance: person1Balances.isa + person2Balances.isa,
+      lisaBalance: person1Balances.lisa + person2Balances.lisa,
+      taxableBalance: person1Balances.taxable + person2Balances.taxable,
 
       portfolioDepleted,
     });
@@ -303,6 +542,170 @@ function performWithdrawal(
     taxableWithdrawal,
     taxFreeLumpSum,
     capitalGains,
+    total,
+  };
+}
+
+// Couple withdrawal result type
+interface CoupleWithdrawalResult {
+  person1PensionWithdrawal: number;
+  person1IsaWithdrawal: number;
+  person1LisaWithdrawal: number;
+  person1TaxableWithdrawal: number;
+  person1TaxFreeLumpSum: number;
+  person1CapitalGains: number;
+  person2PensionWithdrawal: number;
+  person2IsaWithdrawal: number;
+  person2LisaWithdrawal: number;
+  person2TaxableWithdrawal: number;
+  person2TaxFreeLumpSum: number;
+  person2CapitalGains: number;
+  total: number;
+}
+
+// Couple withdrawal strategy - optimizes across both people's tax allowances
+function performCoupleWithdrawal(
+  balances: CoupleBalances,
+  target: number,
+  taxFreeLumpSum: { person1: number; person2: number },
+  isScottish: { person1: boolean; person2: boolean },
+  statePension: { person1: number; person2: number },
+  taxBracketTarget: { person1: TaxBracketTarget; person2: TaxBracketTarget },
+  canAccessPension: { person1: boolean; person2: boolean }
+): CoupleWithdrawalResult {
+  let remaining = target;
+
+  // Initialize per-person withdrawal tracking
+  let p1Pension = 0, p1Isa = 0, p1Lisa = 0, p1Taxable = 0, p1TaxFreeLumpSum = 0, p1CapitalGains = 0;
+  let p2Pension = 0, p2Isa = 0, p2Lisa = 0, p2Taxable = 0, p2TaxFreeLumpSum = 0, p2CapitalGains = 0;
+
+  // Calculate tax bracket thresholds for each person
+  const p1Thresholds = TAX_BRACKET_THRESHOLDS[taxBracketTarget.person1];
+  const p2Thresholds = TAX_BRACKET_THRESHOLDS[taxBracketTarget.person2];
+  const p1MaxBracket = isScottish.person1 ? p1Thresholds.scottish : p1Thresholds.uk;
+  const p2MaxBracket = isScottish.person2 ? p2Thresholds.scottish : p2Thresholds.uk;
+
+  // Calculate room in lower tax brackets for each person
+  const p1RoomInBracket = Math.max(0, p1MaxBracket - statePension.person1);
+  const p2RoomInBracket = Math.max(0, p2MaxBracket - statePension.person2);
+
+  // Step 1: Tax-free lump sums from both people's pensions
+  if (canAccessPension.person1 && remaining > 0 && taxFreeLumpSum.person1 > 0 && balances.person1.pension > 0) {
+    const lumpSum = Math.min(remaining, taxFreeLumpSum.person1, balances.person1.pension);
+    p1TaxFreeLumpSum = lumpSum;
+    p1Pension += lumpSum;
+    balances.person1.pension -= lumpSum;
+    remaining -= lumpSum;
+  }
+  if (canAccessPension.person2 && remaining > 0 && taxFreeLumpSum.person2 > 0 && balances.person2.pension > 0) {
+    const lumpSum = Math.min(remaining, taxFreeLumpSum.person2, balances.person2.pension);
+    p2TaxFreeLumpSum = lumpSum;
+    p2Pension += lumpSum;
+    balances.person2.pension -= lumpSum;
+    remaining -= lumpSum;
+  }
+
+  // Step 2: Fill tax brackets with pension withdrawals - split between both people
+  // This is the key tax optimization: use both people's lower tax bands
+  if (remaining > 0) {
+    // Person 1 pension filling
+    if (canAccessPension.person1 && p1RoomInBracket > 0 && balances.person1.pension > 0) {
+      const toWithdraw = Math.min(remaining, p1RoomInBracket, balances.person1.pension);
+      p1Pension += toWithdraw;
+      balances.person1.pension -= toWithdraw;
+      remaining -= toWithdraw;
+    }
+
+    // Person 2 pension filling
+    if (canAccessPension.person2 && remaining > 0 && p2RoomInBracket > 0 && balances.person2.pension > 0) {
+      const toWithdraw = Math.min(remaining, p2RoomInBracket, balances.person2.pension);
+      p2Pension += toWithdraw;
+      balances.person2.pension -= toWithdraw;
+      remaining -= toWithdraw;
+    }
+  }
+
+  // Step 3: ISA withdrawals (tax-free) from both people
+  if (remaining > 0 && balances.person1.isa > 0) {
+    const toWithdraw = Math.min(remaining, balances.person1.isa);
+    p1Isa = toWithdraw;
+    balances.person1.isa -= toWithdraw;
+    remaining -= toWithdraw;
+  }
+  if (remaining > 0 && balances.person2.isa > 0) {
+    const toWithdraw = Math.min(remaining, balances.person2.isa);
+    p2Isa = toWithdraw;
+    balances.person2.isa -= toWithdraw;
+    remaining -= toWithdraw;
+  }
+
+  // Step 4: LISA withdrawals from both people
+  if (remaining > 0 && balances.person1.lisa > 0) {
+    const toWithdraw = Math.min(remaining, balances.person1.lisa);
+    p1Lisa = toWithdraw;
+    balances.person1.lisa -= toWithdraw;
+    remaining -= toWithdraw;
+  }
+  if (remaining > 0 && balances.person2.lisa > 0) {
+    const toWithdraw = Math.min(remaining, balances.person2.lisa);
+    p2Lisa = toWithdraw;
+    balances.person2.lisa -= toWithdraw;
+    remaining -= toWithdraw;
+  }
+
+  // Step 5: Taxable accounts (GIA) - use both people's CGT allowances
+  if (remaining > 0 && balances.person1.taxable > 0) {
+    const toWithdraw = Math.min(remaining, balances.person1.taxable);
+    if (balances.person1.taxable > 0) {
+      const gainRatio = 1 - balances.person1.taxableCostBasis / balances.person1.taxable;
+      p1CapitalGains = toWithdraw * gainRatio;
+      balances.person1.taxableCostBasis *= (balances.person1.taxable - toWithdraw) / balances.person1.taxable;
+    }
+    p1Taxable = toWithdraw;
+    balances.person1.taxable -= toWithdraw;
+    remaining -= toWithdraw;
+  }
+  if (remaining > 0 && balances.person2.taxable > 0) {
+    const toWithdraw = Math.min(remaining, balances.person2.taxable);
+    if (balances.person2.taxable > 0) {
+      const gainRatio = 1 - balances.person2.taxableCostBasis / balances.person2.taxable;
+      p2CapitalGains = toWithdraw * gainRatio;
+      balances.person2.taxableCostBasis *= (balances.person2.taxable - toWithdraw) / balances.person2.taxable;
+    }
+    p2Taxable = toWithdraw;
+    balances.person2.taxable -= toWithdraw;
+    remaining -= toWithdraw;
+  }
+
+  // Step 6: Additional pension withdrawals if needed (higher tax rates)
+  if (canAccessPension.person1 && remaining > 0 && balances.person1.pension > 0) {
+    const toWithdraw = Math.min(remaining, balances.person1.pension);
+    p1Pension += toWithdraw;
+    balances.person1.pension -= toWithdraw;
+    remaining -= toWithdraw;
+  }
+  if (canAccessPension.person2 && remaining > 0 && balances.person2.pension > 0) {
+    const toWithdraw = Math.min(remaining, balances.person2.pension);
+    p2Pension += toWithdraw;
+    balances.person2.pension -= toWithdraw;
+    remaining -= toWithdraw;
+  }
+
+  const total = p1Pension + p1Isa + p1Lisa + p1Taxable + p2Pension + p2Isa + p2Lisa + p2Taxable;
+
+  return {
+    person1PensionWithdrawal: p1Pension,
+    person1IsaWithdrawal: p1Isa,
+    person1LisaWithdrawal: p1Lisa,
+    person1TaxableWithdrawal: p1Taxable,
+    person1TaxFreeLumpSum: p1TaxFreeLumpSum,
+    person1CapitalGains: p1CapitalGains,
+    person2PensionWithdrawal: p2Pension,
+    person2IsaWithdrawal: p2Isa,
+    person2LisaWithdrawal: p2Lisa,
+    person2TaxableWithdrawal: p2Taxable,
+    person2TaxFreeLumpSum: p2TaxFreeLumpSum,
+    person2CapitalGains: p2CapitalGains,
     total,
   };
 }

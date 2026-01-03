@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Account, Profile, Assumptions, AccumulationResult, RetirementResult } from '../types';
+import { Account, HouseholdProfile, Assumptions, AccumulationResult, RetirementResult } from '../types';
 import { calculateAccumulation } from '../utils/projections';
 import { calculateWithdrawals } from '../utils/withdrawals';
 
@@ -10,7 +10,7 @@ interface RetirementCalculation {
 
 export function useRetirementCalculator(
   accounts: Account[],
-  profile: Profile,
+  household: HouseholdProfile,
   assumptions: Assumptions
 ): RetirementCalculation | null {
   return useMemo(() => {
@@ -19,16 +19,12 @@ export function useRetirementCalculator(
     }
 
     // Calculate accumulation phase
-    const accumulation = calculateAccumulation(
-      accounts,
-      profile.currentAge,
-      profile.retirementAge
-    );
+    const accumulation = calculateAccumulation(accounts, household);
 
     // Calculate withdrawal/retirement phase
     const retirement = calculateWithdrawals(
       accounts,
-      profile,
+      household,
       assumptions,
       accumulation
     );
@@ -37,5 +33,5 @@ export function useRetirementCalculator(
       accumulation,
       retirement,
     };
-  }, [accounts, profile, assumptions]);
+  }, [accounts, household, assumptions]);
 }

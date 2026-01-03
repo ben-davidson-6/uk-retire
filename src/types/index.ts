@@ -8,6 +8,12 @@ export type AccountType =
 
 export type TaxTreatment = 'pension' | 'isa' | 'lisa' | 'taxable';
 
+// Planning mode for single person or couple
+export type PlanningMode = 'single' | 'couple';
+
+// Person identifier for couple mode
+export type PersonId = 'person1' | 'person2';
+
 export interface Account {
   id: string;
   name: string;
@@ -19,6 +25,8 @@ export interface Account {
   // Workplace pension specific
   employerContribution?: number;   // Employer contribution percentage
   salaryForMatch?: number;         // Salary used to calculate employer contribution
+  // Couple mode
+  owner?: PersonId;                // Account owner (required in couple mode)
 }
 
 // Tax bracket targets for withdrawal strategy
@@ -28,6 +36,27 @@ export type TaxBracketTarget =
   | 'higher_rate'         // Stay below £125,140 - max 40% tax
   | 'no_limit';           // Draw pension last (original behavior)
 
+// Individual person's profile (for couple mode)
+export interface PersonProfile {
+  name: string;                    // Display name (e.g., "Person 1" or custom)
+  currentAge: number;
+  retirementAge: number;
+  lifeExpectancy: number;
+  privatePensionAge: number;       // Age when private pension can be accessed
+  statePensionAge: number;         // UK State Pension age for this person
+  isScottish: boolean;             // Scotland has different income tax rates
+  taxBracketTarget: TaxBracketTarget;  // Which tax bracket to fill before using ISA/LISA
+}
+
+// Household profile supporting single or couple mode
+export interface HouseholdProfile {
+  mode: PlanningMode;
+  person1: PersonProfile;
+  person2?: PersonProfile;         // Only populated in couple mode
+  statePensionAmount: number;      // Combined household state pension
+}
+
+// Legacy Profile interface (for backward compatibility)
 export interface Profile {
   currentAge: number;
   retirementAge: number;
@@ -144,4 +173,36 @@ export function isPension(type: AccountType): boolean {
 
 export function isTaxFree(type: AccountType): boolean {
   return type === 'isa' || type === 'lisa';
+}
+
+// Convert legacy Profile to HouseholdProfile
+export function profileToHousehold(profile: Profile): HouseholdProfile {
+  return {
+    mode: 'single',
+    person1: {
+      name: 'Person 1',
+      currentAge: profile.currentAge,
+      retirementAge: profile.retirementAge,
+      lifeExpectancy: profile.lifeExpectancy,
+      privatePensionAge: profile.privatePensionAge,
+      statePensionAge: profile.statePensionAge,
+      isScottish: profile.isScottish,
+      taxBracketTarget: profile.taxBracketTarget,
+    },
+    statePensionAmount: profile.statePensionAmount,
+  };
+}
+
+// Convert HouseholdProfile to legacy Profile (uses person1 for single mode)
+export function householdToProfile(household: HouseholdProfile): Profile {
+  return {
+    currentAge: household.person1.currentAge,
+    retirementAge: household.person1.retirementAge,
+    lifeExpectancy: household.person1.lifeExpectancy,
+    privatePensionAge: household.person1.privatePensionAge,
+    statePensionAge: household.person1.statePensionAge,
+    statePensionAmount: household.statePensionAmount,
+    isScottish: household.person1.isScottish,
+    taxBracketTarget: household.person1.taxBracketTarget,
+  };
 }

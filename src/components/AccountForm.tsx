@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { Account, AccountType, getAccountTypeLabel } from '../types';
+import { Account, AccountType, getAccountTypeLabel, PersonId, PlanningMode } from '../types';
 import { NumberInput } from './NumberInput';
 import { Tooltip } from './Tooltip';
 
@@ -8,6 +8,9 @@ interface AccountFormProps {
   account?: Account;
   onSave: (account: Account) => void;
   onCancel: () => void;
+  planningMode: PlanningMode;
+  person1Name: string;
+  person2Name?: string;
 }
 
 const accountTypes: AccountType[] = [
@@ -27,7 +30,7 @@ const inputClassName = `
   focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500
 `;
 
-export function AccountForm({ account, onSave, onCancel }: AccountFormProps) {
+export function AccountForm({ account, onSave, onCancel, planningMode, person1Name, person2Name }: AccountFormProps) {
   const [formData, setFormData] = useState<Account>({
     id: account?.id || uuidv4(),
     name: account?.name || '',
@@ -38,6 +41,7 @@ export function AccountForm({ account, onSave, onCancel }: AccountFormProps) {
     expectedReturn: account?.expectedReturn || 0.07,
     employerContribution: account?.employerContribution || 3,
     salaryForMatch: account?.salaryForMatch || 50000,
+    owner: account?.owner || (planningMode === 'couple' ? 'person1' : undefined),
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -119,6 +123,24 @@ export function AccountForm({ account, onSave, onCancel }: AccountFormProps) {
           ))}
         </select>
       </div>
+
+      {/* Account Owner (only in couple mode) */}
+      {planningMode === 'couple' && person2Name && (
+        <div>
+          <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Account Owner
+            <Tooltip content="Who owns this account? Each person has separate tax allowances." />
+          </label>
+          <select
+            value={formData.owner || 'person1'}
+            onChange={(e) => handleChange('owner', e.target.value as PersonId)}
+            className={inputClassName}
+          >
+            <option value="person1">{person1Name}</option>
+            <option value="person2">{person2Name}</option>
+          </select>
+        </div>
+      )}
 
       {/* Balance and Contribution */}
       <div className="grid grid-cols-2 gap-4">

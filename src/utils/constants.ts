@@ -66,7 +66,7 @@ export const CHART_COLORS = {
   total: '#6366F1',        // Indigo for totals
 };
 
-// Default Profile
+// Default Profile (legacy - for backward compatibility)
 export const DEFAULT_PROFILE = {
   currentAge: 35,
   retirementAge: 60,
@@ -76,6 +76,38 @@ export const DEFAULT_PROFILE = {
   statePensionAmount: FULL_STATE_PENSION_ANNUAL,
   isScottish: false,
   taxBracketTarget: 'basic_rate' as const,  // Stay below 40% tax rate
+};
+
+// Default Person Profile (for single mode and person1 in couple mode)
+export const DEFAULT_PERSON_PROFILE = {
+  name: 'Person 1',
+  currentAge: 35,
+  retirementAge: 60,
+  lifeExpectancy: 90,
+  privatePensionAge: 57,
+  statePensionAge: STATE_PENSION_AGE,
+  isScottish: false,
+  taxBracketTarget: 'basic_rate' as const,
+};
+
+// Default Person 2 Profile (for couple mode)
+export const DEFAULT_PERSON2_PROFILE = {
+  name: 'Person 2',
+  currentAge: 33,
+  retirementAge: 60,
+  lifeExpectancy: 92,
+  privatePensionAge: 57,
+  statePensionAge: STATE_PENSION_AGE,
+  isScottish: false,
+  taxBracketTarget: 'basic_rate' as const,
+};
+
+// Default Household Profile
+export const DEFAULT_HOUSEHOLD_PROFILE = {
+  mode: 'single' as const,
+  person1: DEFAULT_PERSON_PROFILE,
+  person2: undefined as typeof DEFAULT_PERSON2_PROFILE | undefined,
+  statePensionAmount: FULL_STATE_PENSION_ANNUAL,
 };
 
 // Tax bracket thresholds for withdrawal strategy

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { Account, Profile, Assumptions } from './types';
-import { DEFAULT_PROFILE, DEFAULT_ASSUMPTIONS } from './utils/constants';
+import { Account, HouseholdProfile, Assumptions, householdToProfile } from './types';
+import { DEFAULT_HOUSEHOLD_PROFILE, DEFAULT_ASSUMPTIONS } from './utils/constants';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { useRetirementCalculator } from './hooks/useRetirementCalculator';
 import { Layout } from './components/Layout';
@@ -52,12 +52,19 @@ export default function App() {
     'uk-retirement-accounts',
     createDefaultAccounts()
   );
-  const [storedProfile, setProfile] = useLocalStorage<Partial<Profile>>(
-    'uk-retirement-profile',
-    DEFAULT_PROFILE
+  const [storedHousehold, setHousehold] = useLocalStorage<Partial<HouseholdProfile>>(
+    'uk-retirement-household',
+    DEFAULT_HOUSEHOLD_PROFILE
   );
   // Merge with defaults to handle missing fields from older stored profiles
-  const profile: Profile = { ...DEFAULT_PROFILE, ...storedProfile };
+  const household: HouseholdProfile = {
+    ...DEFAULT_HOUSEHOLD_PROFILE,
+    ...storedHousehold,
+    person1: { ...DEFAULT_HOUSEHOLD_PROFILE.person1, ...storedHousehold?.person1 },
+    person2: storedHousehold?.person2 ?? DEFAULT_HOUSEHOLD_PROFILE.person2,
+  };
+  // Create a profile for backward compatibility with components that still use Profile
+  const profile = householdToProfile(household);
   const [assumptions, setAssumptions] = useLocalStorage<Assumptions>(
     'uk-retirement-assumptions',
     DEFAULT_ASSUMPTIONS
@@ -75,7 +82,7 @@ export default function App() {
   const [showResetModal, setShowResetModal] = useState(false);
 
   // Calculations
-  const results = useRetirementCalculator(accounts, profile, assumptions);
+  const results = useRetirementCalculator(accounts, household, assumptions);
 
   // Handlers
   const toggleSection = (section: keyof typeof expandedSections) => {
@@ -98,7 +105,7 @@ export default function App() {
 
   const handleReset = () => {
     setAccounts(createDefaultAccounts());
-    setProfile(DEFAULT_PROFILE);
+    setHousehold(DEFAULT_HOUSEHOLD_PROFILE);
     setAssumptions(DEFAULT_ASSUMPTIONS);
     setShowResetModal(false);
   };
@@ -150,6 +157,9 @@ export default function App() {
                       setShowAccountForm(false);
                       setEditingAccount(null);
                     }}
+                    planningMode={household.mode}
+                    person1Name={household.person1.name}
+                    person2Name={household.person2?.name}
                   />
                 ) : (
                   <>
@@ -197,7 +207,7 @@ export default function App() {
             </button>
             {expandedSections.profile && (
               <div className="px-4 pb-4">
-                <ProfileForm profile={profile} onChange={setProfile} />
+                <ProfileForm household={household} onChange={setHousehold} />
               </div>
             )}
           </div>

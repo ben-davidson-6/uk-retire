@@ -1,4 +1,4 @@
-import { Account, AccumulationResult, AccumulationYear, getTaxTreatment } from '../types';
+import { Account, AccumulationResult, AccumulationYear, getTaxTreatment, HouseholdProfile } from '../types';
 import { LISA_BONUS_RATE, LISA_MAX_AGE } from './constants';
 
 // Calculate employer contribution for workplace pension
@@ -10,18 +10,43 @@ function calculateEmployerContribution(account: Account): number {
 }
 
 // Calculate LISA bonus (25% government bonus on contributions up to £4k)
-function calculateLISABonus(account: Account, age: number): number {
+function calculateLISABonus(account: Account, ownerAge: number): number {
   if (account.type !== 'lisa') return 0;
-  if (age >= LISA_MAX_AGE) return 0;  // Cannot contribute after age 50
+  if (ownerAge >= LISA_MAX_AGE) return 0;  // Cannot contribute after age 50
 
   return account.annualContribution * LISA_BONUS_RATE;
 }
 
+// Get the owner's age for a given account and year
+function getOwnerAge(
+  account: Account,
+  yearIndex: number,
+  household: HouseholdProfile
+): number {
+  if (household.mode === 'single' || !account.owner || account.owner === 'person1') {
+    return household.person1.currentAge + yearIndex;
+  }
+  return (household.person2?.currentAge ?? household.person1.currentAge) + yearIndex;
+}
+
+// Check if the owner is still working (not retired yet)
+function isOwnerWorking(
+  account: Account,
+  yearIndex: number,
+  household: HouseholdProfile
+): boolean {
+  const ownerAge = getOwnerAge(account, yearIndex, household);
+  if (household.mode === 'single' || !account.owner || account.owner === 'person1') {
+    return ownerAge < household.person1.retirementAge;
+  }
+  return ownerAge < (household.person2?.retirementAge ?? household.person1.retirementAge);
+}
+
 // Project account balances through the accumulation phase (working years)
+// Supports both single and couple modes via HouseholdProfile
 export function calculateAccumulation(
   accounts: Account[],
-  currentAge: number,
-  retirementAge: number
+  household: HouseholdProfile
 ): AccumulationResult {
   const years: AccumulationYear[] = [];
   const currentYear = new Date().getFullYear();
@@ -35,8 +60,24 @@ export function calculateAccumulation(
   let totalContributions = 0;
   let totalReturns = 0;
 
-  for (let age = currentAge; age <= retirementAge; age++) {
-    const yearIndex = age - currentAge;
+  // Determine the planning horizon - use the latest retirement age
+  const person1RetirementAge = household.person1.retirementAge;
+  const person2RetirementAge = household.person2?.retirementAge ?? 0;
+  const latestRetirementAge = Math.max(person1RetirementAge, person2RetirementAge);
+
+  // Use the oldest person's current age as the starting point
+  const person1CurrentAge = household.person1.currentAge;
+  const person2CurrentAge = household.person2?.currentAge ?? 0;
+  const oldestCurrentAge = household.mode === 'couple'
+    ? Math.max(person1CurrentAge, person2CurrentAge)
+    : person1CurrentAge;
+
+  // For single mode, use person1's ages
+  const effectiveCurrentAge = household.mode === 'single' ? person1CurrentAge : oldestCurrentAge;
+  const effectiveRetirementAge = household.mode === 'single' ? person1RetirementAge : latestRetirementAge;
+
+  for (let yearIndex = 0; yearIndex <= effectiveRetirementAge - effectiveCurrentAge; yearIndex++) {
+    const age = effectiveCurrentAge + yearIndex;
     const year = currentYear + yearIndex;
 
     // Calculate contributions and returns for each account
@@ -49,8 +90,8 @@ export function calculateAccumulation(
       balances[account.id] += returns;
       yearReturns += returns;
 
-      // Only add contributions if not yet at retirement age
-      if (age < retirementAge) {
+      // Only add contributions if owner is still working
+      if (isOwnerWorking(account, yearIndex, household)) {
         // Calculate contribution with growth
         const growthFactor = Math.pow(1 + account.contributionGrowthRate, yearIndex);
         const contribution = account.annualContribution * growthFactor;
@@ -58,8 +99,9 @@ export function calculateAccumulation(
         // Add employer contribution for workplace pensions
         const employerContrib = calculateEmployerContribution(account) * growthFactor;
 
-        // Add LISA bonus
-        const lisaBonus = calculateLISABonus(account, age);
+        // Add LISA bonus (based on owner's age)
+        const ownerAge = getOwnerAge(account, yearIndex, household);
+        const lisaBonus = calculateLISABonus(account, ownerAge);
 
         const totalContrib = contribution + employerContrib + lisaBonus;
         balances[account.id] += totalContrib;
@@ -118,6 +160,29 @@ export function calculateAccumulation(
     totalContributions,
     totalReturns,
   };
+}
+
+// Legacy function signature for backward compatibility
+export function calculateAccumulationLegacy(
+  accounts: Account[],
+  currentAge: number,
+  retirementAge: number
+): AccumulationResult {
+  const household: HouseholdProfile = {
+    mode: 'single',
+    person1: {
+      name: 'Person 1',
+      currentAge,
+      retirementAge,
+      lifeExpectancy: 90,
+      privatePensionAge: 57,
+      statePensionAge: 66,
+      isScottish: false,
+      taxBracketTarget: 'basic_rate',
+    },
+    statePensionAmount: 0,
+  };
+  return calculateAccumulation(accounts, household);
 }
 
 // Get balance at a specific age from accumulation results
