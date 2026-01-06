@@ -1,3 +1,6 @@
+# All credit to 
+Vibe coded by pointing claude at this repo and saying make me UK version https://github.com/mjcrepeau/retirement-planner . 
+
 # UK Retirement Planner
 
 A comprehensive retirement planning calculator designed for the UK tax system. Project your portfolio growth, simulate tax-optimised withdrawals, and visualise your financial future through retirement.
