@@ -124,6 +124,7 @@ export const DEFAULT_ASSUMPTIONS = {
   safeWithdrawalRate: 0.04,
   retirementReturnRate: 0.05,
   targetRetirementIncome: 40000 as number | null,  // £40k/year target, null = use SWR
+  inflateTaxBands: true,  // Assume tax bands rise with inflation (UK Government typically does this)
 };
 
 // Format currency in GBP

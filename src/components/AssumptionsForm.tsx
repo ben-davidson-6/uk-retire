@@ -81,6 +81,16 @@ export function AssumptionsForm({ assumptions, onChange }: AssumptionsFormProps)
         <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
           BoE target: 2%
         </p>
+        <label className="flex items-center gap-2 cursor-pointer mt-2">
+          <input
+            type="checkbox"
+            checked={assumptions.inflateTaxBands}
+            onChange={(e) => onChange({ ...assumptions, inflateTaxBands: e.target.checked })}
+            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          />
+          <span className="text-sm text-gray-600 dark:text-gray-400">Inflate tax bands</span>
+          <Tooltip content="Increase tax band thresholds with inflation each year. The UK Government typically does this annually." />
+        </label>
       </div>
 
       {!useTargetIncome && (

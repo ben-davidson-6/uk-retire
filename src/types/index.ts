@@ -73,6 +73,7 @@ export interface Assumptions {
   safeWithdrawalRate: number;
   retirementReturnRate: number;
   targetRetirementIncome: number | null;  // Annual target in today's money, null = use SWR
+  inflateTaxBands: boolean;  // Whether to inflation-adjust tax bands over time
 }
 
 // Yearly snapshot during accumulation

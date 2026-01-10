@@ -83,15 +83,23 @@ function calculateSingleWithdrawals(
     const yearIndex = age - profile.retirementAge;
     const year = currentYear + yearsUntilRetirement + yearIndex;
 
+    // Years from today (current age) for inflation calculations
+    const yearsFromToday = age - profile.currentAge;
+
     // Inflation-adjust the withdrawal target
     const inflationFactor = Math.pow(1 + assumptions.inflationRate, yearIndex);
     const withdrawalTarget = baseWithdrawalTarget * inflationFactor;
 
-    // Calculate State Pension income (inflation-adjusted after state pension age)
+    // Tax band inflation factor (from today, not retirement)
+    const taxBandInflationFactor = assumptions.inflateTaxBands
+      ? Math.pow(1 + assumptions.inflationRate, yearsFromToday)
+      : 1;
+
+    // Calculate State Pension income (inflation-adjusted from today, not state pension age)
+    // The state pension amount is in today's money, so it should grow with inflation from now
     let statePension = 0;
     if (age >= profile.statePensionAge) {
-      const statePensionYears = age - profile.statePensionAge;
-      const statePensionInflation = Math.pow(1 + assumptions.inflationRate, statePensionYears);
+      const statePensionInflation = Math.pow(1 + assumptions.inflationRate, yearsFromToday);
       statePension = household.statePensionAmount * statePensionInflation;
     }
 
@@ -102,9 +110,12 @@ function calculateSingleWithdrawals(
     const startingBalance =
       balances.pension + balances.isa + balances.lisa + balances.taxable;
 
-    // Determine tax bracket threshold to fill based on user preference
+    // Determine tax bracket threshold to fill based on user preference (inflated if enabled)
     const thresholds = TAX_BRACKET_THRESHOLDS[profile.taxBracketTarget];
-    const maxTaxBracketThreshold = profile.isScottish ? thresholds.scottish : thresholds.uk;
+    const baseMaxTaxBracketThreshold = profile.isScottish ? thresholds.scottish : thresholds.uk;
+    const maxTaxBracketThreshold = baseMaxTaxBracketThreshold === Infinity
+      ? Infinity
+      : Math.round(baseMaxTaxBracketThreshold * taxBandInflationFactor);
 
     // Check if private pension is accessible
     const canAccessPension = age >= profile.privatePensionAge;
@@ -140,19 +151,21 @@ function calculateSingleWithdrawals(
     const endingBalance =
       balances.pension + balances.isa + balances.lisa + balances.taxable;
 
-    // Calculate taxes
+    // Calculate taxes (with inflated tax bands if enabled)
     const taxableIncome =
       statePension + withdrawal.pensionWithdrawal - withdrawal.taxFreeLumpSum;
 
     const { tax: incomeTax } = calculateIncomeTax(
       Math.max(0, taxableIncome),
-      profile.isScottish
+      profile.isScottish,
+      taxBandInflationFactor
     );
 
     const capitalGainsTax = calculateCapitalGainsTax(
       withdrawal.capitalGains,
       taxableIncome,
-      profile.isScottish
+      profile.isScottish,
+      taxBandInflationFactor
     );
 
     const totalTax = incomeTax + capitalGainsTax;
@@ -292,22 +305,33 @@ function calculateCoupleWithdrawals(
     const person1Age = referenceAge - ageDiff1 + (oldestCurrentAge - earliestRetirementAge);
     const person2Age = referenceAge - ageDiff2 + (oldestCurrentAge - earliestRetirementAge);
 
+    // Years from today for each person (for inflation calculations)
+    const person1YearsFromToday = person1Age - person1.currentAge;
+    const person2YearsFromToday = person2Age - person2.currentAge;
+
     // Inflation-adjust the withdrawal target
     const inflationFactor = Math.pow(1 + assumptions.inflationRate, yearIndex);
     const withdrawalTarget = baseWithdrawalTarget * inflationFactor;
 
-    // Calculate State Pension - split 50/50 between both people, each starts at their state pension age
+    // Tax band inflation factor (use average of both persons' years from today)
+    const avgYearsFromToday = (person1YearsFromToday + person2YearsFromToday) / 2;
+    const taxBandInflationFactor = assumptions.inflateTaxBands
+      ? Math.pow(1 + assumptions.inflationRate, avgYearsFromToday)
+      : 1;
+
+    // Calculate State Pension - split 50/50 between both people
+    // Inflation-adjusted from today (not from state pension age)
     let person1StatePension = 0;
     let person2StatePension = 0;
     const halfStatePension = household.statePensionAmount / 2;
 
     if (person1Age >= person1.statePensionAge) {
-      const yearsReceiving = person1Age - person1.statePensionAge;
-      person1StatePension = halfStatePension * Math.pow(1 + assumptions.inflationRate, yearsReceiving);
+      const person1Inflation = Math.pow(1 + assumptions.inflationRate, person1YearsFromToday);
+      person1StatePension = halfStatePension * person1Inflation;
     }
     if (person2Age >= person2.statePensionAge) {
-      const yearsReceiving = person2Age - person2.statePensionAge;
-      person2StatePension = halfStatePension * Math.pow(1 + assumptions.inflationRate, yearsReceiving);
+      const person2Inflation = Math.pow(1 + assumptions.inflationRate, person2YearsFromToday);
+      person2StatePension = halfStatePension * person2Inflation;
     }
     const totalStatePension = person1StatePension + person2StatePension;
 
@@ -331,7 +355,8 @@ function calculateCoupleWithdrawals(
       { person1: person1.isScottish, person2: person2.isScottish },
       { person1: person1StatePension, person2: person2StatePension },
       { person1: person1.taxBracketTarget, person2: person2.taxBracketTarget },
-      { person1: person1CanAccessPension, person2: person2CanAccessPension }
+      { person1: person1CanAccessPension, person2: person2CanAccessPension },
+      taxBandInflationFactor
     );
 
     // Update tax-free lump sum remaining
@@ -356,15 +381,15 @@ function calculateCoupleWithdrawals(
       person1Balances.pension + person1Balances.isa + person1Balances.lisa + person1Balances.taxable +
       person2Balances.pension + person2Balances.isa + person2Balances.lisa + person2Balances.taxable;
 
-    // Calculate taxes for each person
+    // Calculate taxes for each person (with inflated tax bands if enabled)
     const person1TaxableIncome = person1StatePension + withdrawal.person1PensionWithdrawal - withdrawal.person1TaxFreeLumpSum;
     const person2TaxableIncome = person2StatePension + withdrawal.person2PensionWithdrawal - withdrawal.person2TaxFreeLumpSum;
 
-    const { tax: person1IncomeTax } = calculateIncomeTax(Math.max(0, person1TaxableIncome), person1.isScottish);
-    const { tax: person2IncomeTax } = calculateIncomeTax(Math.max(0, person2TaxableIncome), person2.isScottish);
+    const { tax: person1IncomeTax } = calculateIncomeTax(Math.max(0, person1TaxableIncome), person1.isScottish, taxBandInflationFactor);
+    const { tax: person2IncomeTax } = calculateIncomeTax(Math.max(0, person2TaxableIncome), person2.isScottish, taxBandInflationFactor);
 
-    const person1CGT = calculateCapitalGainsTax(withdrawal.person1CapitalGains, person1TaxableIncome, person1.isScottish);
-    const person2CGT = calculateCapitalGainsTax(withdrawal.person2CapitalGains, person2TaxableIncome, person2.isScottish);
+    const person1CGT = calculateCapitalGainsTax(withdrawal.person1CapitalGains, person1TaxableIncome, person1.isScottish, taxBandInflationFactor);
+    const person2CGT = calculateCapitalGainsTax(withdrawal.person2CapitalGains, person2TaxableIncome, person2.isScottish, taxBandInflationFactor);
 
     const incomeTax = person1IncomeTax + person2IncomeTax;
     const capitalGainsTax = person1CGT + person2CGT;
@@ -571,7 +596,8 @@ function performCoupleWithdrawal(
   isScottish: { person1: boolean; person2: boolean },
   statePension: { person1: number; person2: number },
   taxBracketTarget: { person1: TaxBracketTarget; person2: TaxBracketTarget },
-  canAccessPension: { person1: boolean; person2: boolean }
+  canAccessPension: { person1: boolean; person2: boolean },
+  taxBandInflationFactor: number = 1
 ): CoupleWithdrawalResult {
   let remaining = target;
 
@@ -579,11 +605,13 @@ function performCoupleWithdrawal(
   let p1Pension = 0, p1Isa = 0, p1Lisa = 0, p1Taxable = 0, p1TaxFreeLumpSum = 0, p1CapitalGains = 0;
   let p2Pension = 0, p2Isa = 0, p2Lisa = 0, p2Taxable = 0, p2TaxFreeLumpSum = 0, p2CapitalGains = 0;
 
-  // Calculate tax bracket thresholds for each person
+  // Calculate tax bracket thresholds for each person (inflated if enabled)
   const p1Thresholds = TAX_BRACKET_THRESHOLDS[taxBracketTarget.person1];
   const p2Thresholds = TAX_BRACKET_THRESHOLDS[taxBracketTarget.person2];
-  const p1MaxBracket = isScottish.person1 ? p1Thresholds.scottish : p1Thresholds.uk;
-  const p2MaxBracket = isScottish.person2 ? p2Thresholds.scottish : p2Thresholds.uk;
+  const p1BaseMaxBracket = isScottish.person1 ? p1Thresholds.scottish : p1Thresholds.uk;
+  const p2BaseMaxBracket = isScottish.person2 ? p2Thresholds.scottish : p2Thresholds.uk;
+  const p1MaxBracket = p1BaseMaxBracket === Infinity ? Infinity : Math.round(p1BaseMaxBracket * taxBandInflationFactor);
+  const p2MaxBracket = p2BaseMaxBracket === Infinity ? Infinity : Math.round(p2BaseMaxBracket * taxBandInflationFactor);
 
   // Calculate room in lower tax brackets for each person
   const p1RoomInBracket = Math.max(0, p1MaxBracket - statePension.person1);

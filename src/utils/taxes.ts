@@ -17,21 +17,41 @@ interface TaxBand {
 }
 
 // Get the appropriate tax bands based on Scottish status
-export function getTaxBands(isScottish: boolean): TaxBand[] {
-  return isScottish ? SCOTTISH_TAX_BANDS : UK_TAX_BANDS;
+// inflationFactor is optional - if provided, thresholds are inflated (but not the Infinity max)
+export function getTaxBands(isScottish: boolean, inflationFactor: number = 1): TaxBand[] {
+  const baseBands = isScottish ? SCOTTISH_TAX_BANDS : UK_TAX_BANDS;
+  if (inflationFactor === 1) {
+    return baseBands;
+  }
+  return baseBands.map(band => ({
+    ...band,
+    min: Math.round(band.min * inflationFactor),
+    max: band.max === Infinity ? Infinity : Math.round(band.max * inflationFactor),
+  }));
 }
 
 // Calculate income tax on a given income
+// inflationFactor is optional - if provided, tax band thresholds are inflated
 export function calculateIncomeTax(
   grossIncome: number,
-  isScottish: boolean = false
+  isScottish: boolean = false,
+  inflationFactor: number = 1
 ): { tax: number; breakdown: { band: string; amount: number; tax: number }[] } {
   if (grossIncome <= 0) {
     return { tax: 0, breakdown: [] };
   }
 
-  const bands = getTaxBands(isScottish);
-  const personalAllowance = getEffectivePersonalAllowance(grossIncome);
+  const bands = getTaxBands(isScottish, inflationFactor);
+  // Inflate personal allowance thresholds too
+  const inflatedPersonalAllowance = Math.round(PERSONAL_ALLOWANCE * inflationFactor);
+  const inflatedTaperThreshold = Math.round(PERSONAL_ALLOWANCE_TAPER_THRESHOLD * inflationFactor);
+
+  // Calculate effective personal allowance (tapers above threshold)
+  let personalAllowance = inflatedPersonalAllowance;
+  if (grossIncome > inflatedTaperThreshold) {
+    const reduction = Math.floor((grossIncome - inflatedTaperThreshold) / 2);
+    personalAllowance = Math.max(0, inflatedPersonalAllowance - reduction);
+  }
 
   // Adjust bands for personal allowance
   const adjustedBands = bands.map((band, index) => {
@@ -39,7 +59,7 @@ export function calculateIncomeTax(
       return { ...band, max: personalAllowance };
     }
     // Shift other bands by the difference from standard personal allowance
-    const shift = PERSONAL_ALLOWANCE - personalAllowance;
+    const shift = inflatedPersonalAllowance - personalAllowance;
     return {
       ...band,
       min: Math.max(0, band.min - shift),
@@ -76,21 +96,34 @@ export function calculateIncomeTax(
 }
 
 // Calculate capital gains tax
+// inflationFactor is optional - if provided, CGT thresholds are inflated
 export function calculateCapitalGainsTax(
   capitalGains: number,
   otherIncome: number,
-  isScottish: boolean = false
+  isScottish: boolean = false,
+  inflationFactor: number = 1
 ): number {
   if (capitalGains <= 0) return 0;
 
-  // Apply annual exempt amount
-  const taxableGains = Math.max(0, capitalGains - CGT_ANNUAL_EXEMPT_AMOUNT);
+  // Apply annual exempt amount (inflated if applicable)
+  const inflatedCGTAllowance = Math.round(CGT_ANNUAL_EXEMPT_AMOUNT * inflationFactor);
+  const taxableGains = Math.max(0, capitalGains - inflatedCGTAllowance);
   if (taxableGains <= 0) return 0;
 
   // Determine if basic or higher rate applies
   // CGT rates depend on your income tax band after gains are added
-  const personalAllowance = getEffectivePersonalAllowance(otherIncome + taxableGains);
-  const basicRateLimit = isScottish ? 43662 : 50270;  // Top of basic rate band
+  const inflatedPersonalAllowance = Math.round(PERSONAL_ALLOWANCE * inflationFactor);
+  const inflatedTaperThreshold = Math.round(PERSONAL_ALLOWANCE_TAPER_THRESHOLD * inflationFactor);
+
+  // Calculate effective personal allowance (tapers above threshold)
+  let personalAllowance = inflatedPersonalAllowance;
+  if (otherIncome + taxableGains > inflatedTaperThreshold) {
+    const reduction = Math.floor((otherIncome + taxableGains - inflatedTaperThreshold) / 2);
+    personalAllowance = Math.max(0, inflatedPersonalAllowance - reduction);
+  }
+
+  // Basic rate limit (inflated)
+  const basicRateLimit = Math.round((isScottish ? 43662 : 50270) * inflationFactor);
 
   const incomeAboveAllowance = Math.max(0, otherIncome - personalAllowance);
   const remainingBasicBand = Math.max(0, basicRateLimit - personalAllowance - incomeAboveAllowance);
